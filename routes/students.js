@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Student = require('../models/Student');
+const SessionReport = require('../models/SessionReport');
 const { verifyToken, adminOnly } = require('../middleware/auth');
 
 async function nextStudentId() {
@@ -8,13 +9,63 @@ async function nextStudentId() {
   return `STU-${String(count + 1).padStart(5, '0')}`;
 }
 
-// GET /api/students — list all (admin), or by teacherId query param (teacher)
+// Derive engagement category from a 0-100 focus score.
+function scoreToEngagement(score) {
+  if (score >= 65) return 'engaged';
+  if (score >= 35) return 'distracted';
+  return 'flagged';
+}
+
+// GET /api/students — list students, enriched with computed engagementLevel
 router.get('/', verifyToken, async (req, res) => {
   try {
     const filter = {};
     if (req.query.classGroup) filter.classGroup = req.query.classGroup;
     const students = await Student.find(filter).lean();
-    res.json(students.map(s => ({ ...s, id: s._id.toString(), _id: undefined, __v: undefined })));
+
+    if (students.length === 0) return res.json([]);
+
+    // Fetch all session reports for the relevant class groups (newest first).
+    const classGroups = [...new Set(students.map(s => s.classGroup))];
+    const reports = await SessionReport.find({ classGroup: { $in: classGroups } })
+      .sort({ date: -1 })
+      .lean();
+
+    // Build lookup maps — first occurrence per key = most recent score.
+    // Match by _id string first (if droid stores it), then by normalised name.
+    const byId   = {};  // studentId string → focusScore
+    const byName = {};  // lower-case name  → focusScore
+
+    for (const report of reports) {
+      for (const eng of (report.studentEngagements || [])) {
+        const score = typeof eng.focusScore === 'number' ? eng.focusScore : null;
+        if (score === null) continue;
+
+        const sid = eng.studentId;
+        if (sid && byId[sid] === undefined) byId[sid] = score;
+
+        const sname = (eng.studentName || '').trim().toLowerCase();
+        if (sname && byName[sname] === undefined) byName[sname] = score;
+      }
+    }
+
+    res.json(students.map(s => {
+      const sid   = s._id.toString();
+      const sname = s.name.trim().toLowerCase();
+
+      let focusScore = null;
+      if (byId[sid] !== undefined)       focusScore = byId[sid];
+      else if (byName[sname] !== undefined) focusScore = byName[sname];
+
+      return {
+        ...s,
+        id: sid,
+        _id: undefined,
+        __v: undefined,
+        // Computed from real droid data; null when no session data exists.
+        engagementLevel: focusScore !== null ? scoreToEngagement(focusScore) : null,
+      };
+    }));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

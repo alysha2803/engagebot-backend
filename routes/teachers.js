@@ -37,6 +37,25 @@ router.get('/profile', verifyToken, async (req, res) => {
   }
 });
 
+// PATCH /api/teachers/profile — teacher updates their own name
+router.patch('/profile', verifyToken, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: 'name is required' });
+    }
+    const teacher = await Teacher.findByIdAndUpdate(
+      req.user.id,
+      { name: name.trim() },
+      { new: true }
+    );
+    if (!teacher) return res.status(404).json({ message: 'Teacher not found' });
+    res.json(teacher.toPublic());
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // POST /api/teachers — admin creates a new teacher with a temporary password
 router.post('/', verifyToken, adminOnly, async (req, res) => {
   try {

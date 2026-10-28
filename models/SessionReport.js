@@ -7,6 +7,11 @@ const studentEngagementSchema = new mongoose.Schema({
   focusScore: Number,
   distractedCount: Number,
   participationScore: Number,
+  avgEAR: Number,
+  avgMAR: Number,
+  poseDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
+  expressionDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
+  timeline: { type: [{ t: Number, score: Number }], default: [] },
 }, { _id: false });
 
 const droidObservationSchema = new mongoose.Schema({
