@@ -31,8 +31,12 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/subjects', require('./routes/subjects'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/emotion', require('./routes/emotion'));
 
-app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
+app.get('/api/health', (_, res) => res.json({
+  status: 'ok',
+  emotionDb: require('./db/emotion').isReady() ? 'connected' : 'disconnected',
+}));
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
