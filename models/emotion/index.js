@@ -5,4 +5,6 @@ module.exports = {
   OpenFaceFeature: require('./OpenFaceFeature'),
   PoseFeature: require('./PoseFeature'),
   Transcript: require('./Transcript'),
+  FaceLandmark: require('./FaceLandmark'),
+  EmotionPrediction: require('./EmotionPrediction'),
 };
