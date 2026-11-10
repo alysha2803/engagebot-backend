@@ -8,6 +8,10 @@ const studentSchema = new mongoose.Schema({
   status: { type: String, enum: ['verified', 'pending', 'error'], default: 'pending' },
   studentId: { type: String, unique: true },
   batchId: { type: String },
+  // One embedding vector per enrollment photo (e.g. ArcFace, 512-d). Multiple
+  // vectors per student improve match robustness across angles/lighting.
+  faceEmbeddings: { type: [[Number]], default: undefined },
+  faceEnrolledAt: { type: Date },
 }, { timestamps: true });
 
 studentSchema.methods.toPublic = function () {
@@ -15,6 +19,9 @@ studentSchema.methods.toPublic = function () {
   obj.id = obj._id.toString();
   delete obj._id;
   delete obj.__v;
+  // Biometric data — never broadcast on general student reads; only the
+  // dedicated face-embeddings endpoint (used by the droid for matching) sees it.
+  delete obj.faceEmbeddings;
   return obj;
 };
 

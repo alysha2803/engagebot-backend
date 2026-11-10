@@ -62,6 +62,9 @@ router.get('/', verifyToken, async (req, res) => {
         id: sid,
         _id: undefined,
         __v: undefined,
+        // Biometric data — never broadcast on general student reads; only the
+        // dedicated face-embeddings endpoint (used by the droid for matching) sees it.
+        faceEmbeddings: undefined,
         // Computed from real droid data; null when no session data exists.
         engagementLevel: focusScore !== null ? scoreToEngagement(focusScore) : null,
       };
@@ -99,6 +102,44 @@ router.patch('/:id', verifyToken, async (req, res) => {
     const student = await Student.findByIdAndUpdate(req.params.id, patch, { new: true });
     if (!student) return res.status(404).json({ message: 'Student not found' });
     res.json(student.toPublic());
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/students/:id/face-embeddings — enroll/replace a student's reference face embeddings
+router.post('/:id/face-embeddings', verifyToken, async (req, res) => {
+  try {
+    const { embeddings } = req.body;
+    if (!Array.isArray(embeddings) || embeddings.length === 0 || !Array.isArray(embeddings[0])) {
+      return res.status(400).json({ message: 'embeddings must be a non-empty array of number arrays' });
+    }
+
+    const student = await Student.findByIdAndUpdate(
+      req.params.id,
+      { faceEmbeddings: embeddings, faceEnrolledAt: new Date() },
+      { new: true },
+    );
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+    res.json({ id: student._id.toString(), enrolledVectors: embeddings.length, faceEnrolledAt: student.faceEnrolledAt });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/students/class/:classGroup/face-embeddings — enrolled embeddings for live matching (droid use only)
+router.get('/class/:classGroup/face-embeddings', verifyToken, async (req, res) => {
+  try {
+    const students = await Student.find(
+      { classGroup: req.params.classGroup, faceEmbeddings: { $exists: true, $ne: [] } },
+      { name: 1, faceEmbeddings: 1 },
+    ).lean();
+
+    res.json(students.map(s => ({
+      id: s._id.toString(),
+      name: s.name,
+      embeddings: s.faceEmbeddings,
+    })));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
