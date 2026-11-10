@@ -11,6 +11,10 @@ const studentEngagementSchema = new mongoose.Schema({
   avgMAR: Number,
   poseDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
   expressionDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // Body-language posture (hand_raised/leaning_in/neutral/head_down/slouched),
+  // from YOLOv8-Pose keypoints -- separate from poseDistribution, which is
+  // head pose (forward/down/side/away) derived from the face mesh.
+  postureDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
   timeline: { type: [{ t: Number, score: Number }], default: [] },
 }, { _id: false });
 
