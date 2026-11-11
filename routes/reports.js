@@ -144,7 +144,7 @@ router.patch('/:id', verifyToken, async (req, res) => {
   try {
     const allowed = [
       'status', 'endTime', 'overallEngagement', 'avgFocusScore',
-      'studentEngagements', 'droidObservations',
+      'studentEngagements', 'droidObservations', 'noiseDistribution',
     ];
     const patch = {};
     for (const key of allowed) {
