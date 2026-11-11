@@ -43,6 +43,10 @@ const sessionReportSchema = new mongoose.Schema({
   // unlike the per-student distributions, this is NOT blended into
   // focusScore/engagementLevel; see audio_cues.py for why.
   noiseDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // % of students at each level this session -- avgFocusScore/overallEngagement
+  // alone can hide a bimodal class (half fully engaged, half checked out
+  // averages to "medium"); see fusion.py's class_engagement_summary().
+  engagementBreakdown: { type: mongoose.Schema.Types.Mixed, default: {} },
   studentEngagements: [studentEngagementSchema],
   droidObservations: [droidObservationSchema],
 }, { timestamps: true });
