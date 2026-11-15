@@ -2,7 +2,10 @@ const express = require('express');
 const router = express.Router();
 const ClassSchedule = require('../models/ClassSchedule');
 const Teacher = require('../models/Teacher');
-const { verifyToken, adminOnly } = require('../middleware/auth');
+const { verifyToken, verifyDroidOrToken, adminOnly, isTeacher } = require('../middleware/auth');
+const sendError = require('../utils/sendError');
+
+const checkInTimeFormat = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit' });
 
 const SESSION_COLORS = {
   Mathematics: '#DBEAFE',
@@ -23,10 +26,11 @@ router.get('/', verifyToken, async (req, res) => {
     const filter = {};
     if (req.query.teacherId) filter.teacherId = req.query.teacherId;
     if (req.query.classGroup) filter.classGroup = req.query.classGroup;
+    if (req.query.day) filter.day = req.query.day;
     const sessions = await ClassSchedule.find(filter).lean();
     res.json(sessions.map(s => ({ ...s, id: s._id.toString(), _id: undefined, __v: undefined })));
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -46,7 +50,28 @@ router.post('/', verifyToken, adminOnly, async (req, res) => {
     await Teacher.findByIdAndUpdate(teacherId, { $addToSet: { assignedClasses: classGroup } });
     res.status(201).json(session.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
+  }
+});
+
+// POST /api/schedules/:id/check-in — from the droid, or the teacher's own session in the app (UC-10).
+// Checking in again keeps the first check-in time.
+router.post('/:id/check-in', verifyDroidOrToken, async (req, res) => {
+  try {
+    const session = await ClassSchedule.findById(req.params.id);
+    if (!session) return res.status(404).json({ message: 'Session not found' });
+    if (isTeacher(req) && session.teacherId !== req.user.id) {
+      return res.status(403).json({ message: 'This session belongs to another teacher' });
+    }
+    if (!session.checkedIn) {
+      session.checkedIn = true;
+      session.checkInTime = checkInTimeFormat.format(new Date());
+      session.status = 'ongoing';
+      await session.save();
+    }
+    res.json(session.toPublic());
+  } catch (err) {
+    sendError(res, err);
   }
 });
 
@@ -84,7 +109,7 @@ router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
 
     res.json(session.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -108,7 +133,7 @@ router.delete('/:id', verifyToken, adminOnly, async (req, res) => {
     }
 
     res.json({ message: 'Schedule deleted' });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) { sendError(res, err); }
 });
 
 module.exports = router;

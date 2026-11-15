@@ -7,6 +7,7 @@ const droidSchema = new mongoose.Schema({
   firmware: { type: String, default: 'v1.0.0' },
   battery: { type: Number, default: 0 },
   lastPing: { type: String, default: 'Waiting for first ping…' },
+  lastPingAt: { type: Date },
   status: { type: String, enum: ['active', 'inactive', 'offline'], default: 'inactive' },
   telemetryNotes: { type: String },
 }, { timestamps: true });

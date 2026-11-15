@@ -5,7 +5,7 @@ const mfccFields = {};
 for (let i = 0; i <= 12; i++) mfccFields[`mfcc_mean_${i}`] = { type: Number };
 
 const voiceFeatureSchema = new mongoose.Schema({
-  segment_id: { type: String, required: true },
+  segment_id: { type: String, required: true, unique: true },
   extractor: { type: String },
   schema: { type: String },
   pitch_mean_hz: { type: Number },
