@@ -7,7 +7,9 @@ const {
   Segment, SegmentModality, VoiceFeature, OpenFaceFeature, PoseFeature, Transcript, FaceLandmark, EmotionPrediction,
 } = require('../models/emotion');
 const { verifyDroid } = require('../middleware/droidAuth');
-const { verifyToken, adminOnly } = require('../middleware/auth');
+const { verifyToken, verifyDroidOrToken, adminOnly, isTeacher, canAccessClass } = require('../middleware/auth');
+const { summarizeSession } = require('../services/sessionSummary');
+const sendError = require('../utils/sendError');
 
 // Optional per-segment feature blocks and the collection each one is written to
 const FEATURE_MODELS = {
@@ -27,6 +29,14 @@ function requireEmotionDb(req, res, next) {
     return res.status(503).json({ message: 'Research database unavailable' });
   }
   next();
+}
+
+// session_id is the id of the class's SessionReport, which is how a session is tied to a class.
+async function canAccessSession(req, sessionId) {
+  if (!isTeacher(req)) return true;
+  if (!mongoose.isValidObjectId(sessionId)) return false;
+  const report = await SessionReport.findById(sessionId, 'classGroup').lean();
+  return Boolean(report) && canAccessClass(req, report.classGroup);
 }
 
 // POST /api/emotion/segments — written by droid/feature pipeline
@@ -95,7 +105,7 @@ router.post('/segments', verifyDroid, async (req, res) => {
     if (['ValidationError', 'StrictModeError', 'CastError'].includes(err.name)) {
       return res.status(400).json({ message: err.message });
     }
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -103,6 +113,9 @@ router.post('/segments', verifyDroid, async (req, res) => {
 // Every segment of a class session with its emotion prediction and noise level, in time order.
 router.get('/sessions/:sessionId', verifyToken, requireEmotionDb, async (req, res) => {
   try {
+    if (!(await canAccessSession(req, req.params.sessionId))) {
+      return res.status(403).json({ message: 'You are not assigned to this class' });
+    }
     const segments = await Segment.find({ session_id: req.params.sessionId })
       .sort({ start_offset_sec: 1 }).lean();
     const ids = segments.map(s => s.segment_id);
@@ -124,7 +137,25 @@ router.get('/sessions/:sessionId', verifyToken, requireEmotionDb, async (req, re
       })),
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
+  }
+});
+
+// POST /api/emotion/sessions/:sessionId/summarize
+// Writes the session's results into its SessionReport, so dashboards can show them.
+// Body: { complete?: true } also marks the session as completed.
+router.post('/sessions/:sessionId/summarize', verifyDroidOrToken, requireEmotionDb, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    if (!mongoose.isValidObjectId(sessionId)) return res.status(404).json({ message: 'Session report not found' });
+    if (!(await canAccessSession(req, sessionId))) {
+      return res.status(403).json({ message: 'You are not assigned to this class' });
+    }
+    const report = await summarizeSession(sessionId, { complete: req.body?.complete === true });
+    if (!report) return res.status(404).json({ message: 'Session report not found' });
+    res.json(report.toPublic());
+  } catch (err) {
+    sendError(res, err);
   }
 });
 
@@ -136,6 +167,10 @@ router.patch('/predictions/:segmentId/label', verifyToken, requireEmotionDb, asy
     if (label !== null && (typeof label !== 'string' || !label.trim())) {
       return res.status(400).json({ message: 'label must be a non-empty string or null' });
     }
+    const segment = await Segment.findOne({ segment_id: req.params.segmentId }, 'session_id').lean();
+    if (segment && !(await canAccessSession(req, segment.session_id))) {
+      return res.status(403).json({ message: 'You are not assigned to this class' });
+    }
     const prediction = await EmotionPrediction.findOneAndUpdate(
       { segment_id: req.params.segmentId },
       { teacher_label: label === null ? null : label.trim() },
@@ -144,7 +179,7 @@ router.patch('/predictions/:segmentId/label', verifyToken, requireEmotionDb, asy
     if (!prediction) return res.status(404).json({ message: 'Prediction not found' });
     res.json({ ...prediction, _id: undefined });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -164,7 +199,7 @@ router.get('/storage', verifyToken, adminOnly, requireEmotionDb, async (req, res
       percentOfFreeTier: Math.round((usedBytes / FREE_TIER_BYTES) * 1000) / 10,
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 

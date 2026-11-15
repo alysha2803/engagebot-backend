@@ -11,7 +11,7 @@ const boxSchema = new mongoose.Schema({
 // so the same expression gives the same numbers wherever the student sits.
 // Readable arrays for testing — Zhang may switch to packed binary later.
 const faceLandmarkSchema = new mongoose.Schema({
-  segment_id: { type: String, required: true },
+  segment_id: { type: String, required: true, unique: true },
   extractor: { type: String },        // e.g. 'mediapipe_face_landmarker'
   schema: { type: String },
   frame_offset_sec: { type: Number },

@@ -4,7 +4,7 @@ const emotionConn = require('../../db/emotion');
 // Output of the YOLOv8 emotion classifier for one student segment.
 // teacher_label is the teacher's correction — the ground truth Zhang can evaluate models against.
 const emotionPredictionSchema = new mongoose.Schema({
-  segment_id: { type: String, required: true },
+  segment_id: { type: String, required: true, unique: true },
   extractor: { type: String },        // e.g. 'yolov8n-cls-engagebot'
   schema: { type: String },
   model_version: { type: String, required: true },

@@ -14,7 +14,7 @@ if (!process.env.EMOTION_MONGO_URI) {
 } else {
   emotionConn.openUri(process.env.EMOTION_MONGO_URI, {
     dbName,
-    autoIndex: false,     // never create or change indexes on his cluster
+    autoIndex: false,     // indexes are created on purpose, by scripts/createEmotionIndexes.js
     autoCreate: false,    // collections are created on first insert only
     bufferCommands: false, // fail fast instead of queueing writes while disconnected
   })

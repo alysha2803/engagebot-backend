@@ -3,6 +3,12 @@ const router = express.Router();
 const Teacher = require('../models/Teacher');
 const ClassSchedule = require('../models/ClassSchedule');
 const { verifyToken, adminOnly } = require('../middleware/auth');
+const sendError = require('../utils/sendError');
+
+const MIN_PASSWORD_LENGTH = 8;
+
+// Schedules store a copy of the teacher's name. Past session reports keep the name at the time.
+const syncScheduleNames = (teacherId, name) => ClassSchedule.updateMany({ teacherId }, { teacherName: name });
 
 async function nextEmployeeId() {
   const year = new Date().getFullYear();
@@ -22,7 +28,7 @@ router.get('/', verifyToken, adminOnly, async (req, res) => {
     const teachers = await Teacher.find().select('-password').lean();
     res.json(teachers.map(t => ({ ...t, id: t._id.toString(), _id: undefined, __v: undefined })));
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -33,7 +39,7 @@ router.get('/profile', verifyToken, async (req, res) => {
     if (!teacher) return res.status(404).json({ message: 'Teacher not found' });
     res.json(teacher.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -50,9 +56,10 @@ router.patch('/profile', verifyToken, async (req, res) => {
       { new: true }
     );
     if (!teacher) return res.status(404).json({ message: 'Teacher not found' });
+    await syncScheduleNames(req.user.id, teacher.name);
     res.json(teacher.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -80,7 +87,7 @@ router.post('/', verifyToken, adminOnly, async (req, res) => {
     });
     res.status(201).json(teacher.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -96,9 +103,27 @@ router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
 
     const teacher = await Teacher.findByIdAndUpdate(req.params.id, patch, { new: true });
     if (!teacher) return res.status(404).json({ message: 'Teacher not found' });
+    if (patch.name) await syncScheduleNames(req.params.id, teacher.name);
     res.json(teacher.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
+  }
+});
+
+// POST /api/teachers/:id/reset-password — admin sets a new temporary password
+router.post('/:id/reset-password', verifyToken, adminOnly, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ message: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+    }
+    const teacher = await Teacher.findById(req.params.id);
+    if (!teacher) return res.status(404).json({ message: 'Teacher not found' });
+    teacher.password = password;
+    await teacher.save(); // the model's hook hashes it
+    res.json({ message: 'Password reset' });
+  } catch (err) {
+    sendError(res, err);
   }
 });
 
@@ -110,7 +135,7 @@ router.delete('/:id', verifyToken, adminOnly, async (req, res) => {
     await ClassSchedule.deleteMany({ teacherId: req.params.id });
     res.json({ message: 'Teacher deleted' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 

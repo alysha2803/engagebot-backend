@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Settings = require('../models/Settings');
 const { verifyToken, adminOnly } = require('../middleware/auth');
+const sendError = require('../utils/sendError');
 
 // GET /api/settings — returns global school settings
 router.get('/', verifyToken, async (req, res) => {
@@ -9,7 +10,7 @@ router.get('/', verifyToken, async (req, res) => {
     let settings = await Settings.findOne();
     if (!settings) settings = await Settings.create({ recessTime: '' });
     res.json({ recessTime: settings.recessTime || '' });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) { sendError(res, err); }
 });
 
 // PATCH /api/settings — update global settings (admin only)
@@ -22,7 +23,7 @@ router.patch('/', verifyToken, adminOnly, async (req, res) => {
       { new: true, upsert: true }
     );
     res.json({ recessTime: settings.recessTime || '' });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) { sendError(res, err); }
 });
 
 module.exports = router;

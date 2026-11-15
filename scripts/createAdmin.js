@@ -3,8 +3,7 @@
 // Set MONGO_URI, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME as env vars or in .env
 
 require('dotenv').config();
-const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']);
+require('../db/dns');
 const mongoose = require('mongoose');
 const Admin = require('../models/Admin');
 
