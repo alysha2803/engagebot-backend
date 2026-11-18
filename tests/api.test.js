@@ -418,6 +418,66 @@ describe('step 5: new features', () => {
     assert.ok(logs.body.some(l => l.action === 'create'));
   });
 
+  test('lessons that clash with the same class or teacher are refused', async () => {
+    const base = { subject: 'Sejarah', teacherId: teacherA.id, teacherName: 'Teacher A', classGroup: '5A', day: 'thursday', startTime: '13:00', endTime: '14:00' };
+    const first = await as(request(app).post('/api/schedules'), adminToken).send(base);
+    assert.equal(first.status, 201, first.text);
+
+    const sameClass = await as(request(app).post('/api/schedules'), adminToken)
+      .send({ ...base, subject: 'Geografi', teacherId: teacherB.id, teacherName: 'Teacher B', startTime: '13:30', endTime: '14:30' });
+    assert.equal(sameClass.status, 409);
+    assert.match(sameClass.body.message, /5A already has Sejarah/);
+
+    const sameTeacher = await as(request(app).post('/api/schedules'), adminToken).send({ ...base, classGroup: '5B' });
+    assert.equal(sameTeacher.status, 409);
+
+    const backToBack = await as(request(app).post('/api/schedules'), adminToken).send({ ...base, startTime: '14:00', endTime: '15:00' });
+    assert.equal(backToBack.status, 201, backToBack.text);
+
+    const moveIntoClash = await as(request(app).patch(`/api/schedules/${backToBack.body.id}`), adminToken).send({ startTime: '13:30' });
+    assert.equal(moveIntoClash.status, 409);
+    const moveFine = await as(request(app).patch(`/api/schedules/${backToBack.body.id}`), adminToken).send({ endTime: '15:30' });
+    assert.equal(moveFine.status, 200, moveFine.text);
+  });
+
+  test('editing a droid\'s classroom keeps the classroom page in step', async () => {
+    await models.ClassGroup.create([{ name: 'Sync 1', academicYear: 2026, room: 'R1' }, { name: 'Sync 2', academicYear: 2026, room: 'R2' }]);
+    const created = await as(request(app).post('/api/droids'), adminToken).send({ serialNumber: 'SN-SYNC', assignedRoom: 'Sync 1', firmware: 'v1' });
+    assert.equal(created.status, 201, created.text);
+    assert.equal((await models.ClassGroup.findOne({ name: 'Sync 1' })).droidId, created.body.droidId);
+
+    const moved = await as(request(app).patch(`/api/droids/${created.body.id}`), adminToken)
+      .send({ assignedRoom: 'Sync 2', serialNumber: 'SN-SYNC-2', battery: 99 });
+    assert.equal(moved.status, 200, moved.text);
+    assert.equal(moved.body.assignedRoom, 'Sync 2');
+    assert.equal(moved.body.serialNumber, 'SN-SYNC-2');
+    assert.equal(moved.body.battery, 0); // battery only comes from the droid's heartbeat
+    assert.equal((await models.ClassGroup.findOne({ name: 'Sync 1' })).droidId, undefined);
+    assert.equal((await models.ClassGroup.findOne({ name: 'Sync 2' })).droidId, created.body.droidId);
+
+    const cls2 = await models.ClassGroup.findOne({ name: 'Sync 2' });
+    await as(request(app).patch(`/api/class-groups/${cls2.id}`), adminToken).send({ droidId: '' });
+    assert.equal((await models.Droid.findById(created.body.id)).assignedRoom, 'Unassigned');
+  });
+
+  test('teachers inherit the registering admin\'s school, and it cannot be edited', async () => {
+    await models.Admin.updateOne({ email: 'admin@test.my' }, { school: 'SMK Ujian' });
+
+    const me = await as(request(app).get('/api/auth/me'), adminToken);
+    assert.equal(me.body.school, 'SMK Ujian');
+
+    const created = await as(request(app).post('/api/teachers'), adminToken)
+      .send({ name: 'Teacher S', email: 's@test.my', password: 'teacher-pass-s', school: 'Other School' });
+    assert.equal(created.status, 201, created.text);
+    assert.equal(created.body.school, 'SMK Ujian');
+
+    const patched = await as(request(app).patch(`/api/teachers/${created.body.id}`), adminToken).send({ school: 'Other School' });
+    assert.equal(patched.body.school, 'SMK Ujian');
+
+    const login = await request(app).post('/api/auth/teacher/login').send({ email: 's@test.my', password: 'teacher-pass-s' });
+    assert.equal(login.body.teacher.school, 'SMK Ujian');
+  });
+
   test('error handling: bad JSON, unknown routes, blocked origins', async () => {
     const badJson = await request(app).post('/api/auth/admin/login').set('Content-Type', 'application/json').send('{bad');
     assert.equal(badJson.status, 400);

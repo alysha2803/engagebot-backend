@@ -6,6 +6,8 @@ const adminSchema = new mongoose.Schema({
   password: { type: String, required: true },
   displayName: { type: String, default: null },
   role: { type: String, enum: ['admin', 'super_admin'], default: 'admin' },
+  // The school this admin runs. Teachers they register are tied to the same school.
+  school: { type: String, default: '' },
 }, { timestamps: true });
 
 adminSchema.pre('save', async function (next) {

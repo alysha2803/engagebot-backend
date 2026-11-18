@@ -6,6 +6,7 @@ const { verifyToken, adminOnly } = require('../middleware/auth');
 const { verifyDroid } = require('../middleware/droidAuth');
 const sendError = require('../utils/sendError');
 const nextSequence = require('../utils/sequence');
+const { assignDroidToClass } = require('../utils/droidAssignment');
 
 const OFFLINE_AFTER_MS = 5 * 60 * 1000;
 
@@ -41,11 +42,12 @@ router.get('/', verifyToken, async (req, res) => {
 // POST /api/droids
 router.post('/', verifyToken, adminOnly, async (req, res) => {
   try {
-    const { serialNumber, assignedRoom, firmware } = req.body;
+    const { serialNumber, assignedRoom, firmware, telemetryNotes } = req.body;
     if (!serialNumber) return res.status(400).json({ message: 'serialNumber is required' });
     const droidId = await nextDroidId();
-    const droid = await Droid.create({ droidId, serialNumber, assignedRoom, firmware, battery: 0, lastPing: 'Waiting for first ping…', status: 'inactive' });
-    res.status(201).json(droid.toPublic());
+    await Droid.create({ droidId, serialNumber, firmware, telemetryNotes, battery: 0, lastPing: 'Waiting for first ping…', status: 'inactive' });
+    await assignDroidToClass(droidId, assignedRoom);
+    res.status(201).json((await Droid.findOne({ droidId })).toPublic());
   } catch (err) {
     sendError(res, err);
   }
@@ -74,13 +76,21 @@ router.post('/:droidId/heartbeat', verifyDroid, async (req, res) => {
 // PATCH /api/droids/:id
 router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
   try {
-    const allowed = ['assignedRoom', 'firmware', 'battery', 'lastPing', 'status', 'telemetryNotes'];
+    // battery and last ping come from the droid's own heartbeat, so they are not editable here
+    const allowed = ['serialNumber', 'firmware', 'status', 'telemetryNotes'];
     const patch = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) patch[key] = req.body[key];
     }
-    const droid = await Droid.findByIdAndUpdate(req.params.id, patch, { new: true });
+    if (patch.serialNumber !== undefined && !String(patch.serialNumber).trim()) {
+      return res.status(400).json({ message: 'serialNumber cannot be empty' });
+    }
+    let droid = await Droid.findByIdAndUpdate(req.params.id, patch, { new: true });
     if (!droid) return res.status(404).json({ message: 'Droid not found' });
+    if (req.body.assignedRoom !== undefined && req.body.assignedRoom !== droid.assignedRoom) {
+      await assignDroidToClass(droid.droidId, req.body.assignedRoom);
+      droid = await Droid.findById(droid._id);
+    }
     res.json(droid.toPublic());
   } catch (err) {
     sendError(res, err);
