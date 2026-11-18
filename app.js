@@ -33,6 +33,7 @@ app.use(auditLog);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/teachers', require('./routes/teachers'));
 app.use('/api/students', require('./routes/students'));
+app.use('/api/pending-faces', require('./routes/pendingFaces'));
 app.use('/api/class-groups', require('./routes/classGroups'));
 app.use('/api/droids', require('./routes/droids'));
 app.use('/api/schedules', require('./routes/schedules'));

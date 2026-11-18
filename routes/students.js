@@ -8,6 +8,7 @@ const { verifyToken, adminOnly, isTeacher, canAccessClass } = require('../middle
 const { verifyDroid } = require('../middleware/droidAuth');
 const sendError = require('../utils/sendError');
 const nextSequence = require('../utils/sequence');
+const { appendEmbeddings } = require('../utils/embeddingStore');
 
 async function nextStudentId() {
   const seq = await nextSequence('studentId', async () => {
@@ -87,6 +88,9 @@ router.get('/', verifyToken, async (req, res) => {
         id: sid,
         _id: undefined,
         __v: undefined,
+        // Biometric data — never broadcast on general student reads; only the
+        // dedicated face-embeddings endpoint (used by the droid for matching) sees it.
+        faceEmbeddings: undefined,
         // Computed from real droid data; null when no session data exists.
         engagementLevel: focusScore !== null ? scoreToEngagement(focusScore) : null,
       };
@@ -178,6 +182,65 @@ router.delete('/:id', verifyToken, adminOnly, async (req, res) => {
       await session.endSession();
     }
     res.json({ message: 'Student deleted' });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// POST /api/students/:id/face-embeddings — enroll/replace a student's reference face embeddings
+router.post('/:id/face-embeddings', verifyToken, async (req, res) => {
+  try {
+    const { embeddings } = req.body;
+    if (!Array.isArray(embeddings) || embeddings.length === 0 || !Array.isArray(embeddings[0])) {
+      return res.status(400).json({ message: 'embeddings must be a non-empty array of number arrays' });
+    }
+
+    const student = await Student.findByIdAndUpdate(
+      req.params.id,
+      { faceEmbeddings: embeddings, faceEnrolledAt: new Date() },
+      { new: true },
+    );
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+    res.json({ id: student._id.toString(), enrolledVectors: embeddings.length, faceEnrolledAt: student.faceEnrolledAt });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// PATCH /api/students/:id/face-embeddings — append a high-confidence sighting
+// (continual enrollment growth), unlike POST above which REPLACES the whole
+// set. Caps at MAX_EMBEDDINGS_PER_IDENTITY, dropping the oldest first.
+router.patch('/:id/face-embeddings', verifyToken, async (req, res) => {
+  try {
+    const { embedding } = req.body;
+    if (!Array.isArray(embedding)) {
+      return res.status(400).json({ message: 'embedding (array of numbers) is required' });
+    }
+    const student = await Student.findById(req.params.id).select('faceEmbeddings');
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    student.faceEmbeddings = appendEmbeddings(student.faceEmbeddings, [embedding]);
+    student.faceEnrolledAt = new Date();
+    await student.save();
+    res.json({ id: student._id.toString(), enrolledVectors: student.faceEmbeddings.length });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// GET /api/students/class/:classGroup/face-embeddings — enrolled embeddings for live matching (droid use only)
+router.get('/class/:classGroup/face-embeddings', verifyToken, async (req, res) => {
+  try {
+    const students = await Student.find(
+      { classGroup: req.params.classGroup, faceEmbeddings: { $exists: true, $ne: [] } },
+      { name: 1, faceEmbeddings: 1 },
+    ).lean();
+
+    res.json(students.map(s => ({
+      id: s._id.toString(),
+      name: s.name,
+      embeddings: s.faceEmbeddings,
+    })));
   } catch (err) {
     sendError(res, err);
   }

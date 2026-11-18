@@ -11,6 +11,10 @@ const studentEngagementSchema = new mongoose.Schema({
   avgMAR: Number,
   poseDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
   expressionDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // Body-language posture (hand_raised/leaning_in/neutral/head_down/slouched),
+  // from YOLOv8-Pose keypoints -- separate from poseDistribution, which is
+  // head pose (forward/down/side/away) derived from the face mesh.
+  postureDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
   timeline: { type: [{ t: Number, score: Number }], default: [] },
 }, { _id: false });
 
@@ -36,6 +40,14 @@ const sessionReportSchema = new mongoose.Schema({
   avgFocusScore: { type: Number, default: 0 },
   avgNoiseEnergy: { type: Number }, // average classroom loudness (RMS, 0–1) from the droid's microphone
   status: { type: String, enum: ['completed', 'in_progress'], default: 'in_progress' },
+  // Class-level (one room mic, not attributable to a single student) --
+  // unlike the per-student distributions, this is NOT blended into
+  // focusScore/engagementLevel; see audio_cues.py for why.
+  noiseDistribution: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // % of students at each level this session -- avgFocusScore/overallEngagement
+  // alone can hide a bimodal class (half fully engaged, half checked out
+  // averages to "medium"); see fusion.py's class_engagement_summary().
+  engagementBreakdown: { type: mongoose.Schema.Types.Mixed, default: {} },
   studentEngagements: [studentEngagementSchema],
   droidObservations: [droidObservationSchema],
 }, { timestamps: true });
