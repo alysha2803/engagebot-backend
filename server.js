@@ -18,12 +18,13 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));  // pending-face thumbnails are base64 JPEGs, over the 100kb default
 app.use(cookieParser());
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/teachers', require('./routes/teachers'));
 app.use('/api/students', require('./routes/students'));
+app.use('/api/pending-faces', require('./routes/pendingFaces'));
 app.use('/api/class-groups', require('./routes/classGroups'));
 app.use('/api/droids', require('./routes/droids'));
 app.use('/api/schedules', require('./routes/schedules'));

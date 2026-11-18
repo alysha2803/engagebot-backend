@@ -3,6 +3,7 @@ const router = express.Router();
 const Student = require('../models/Student');
 const SessionReport = require('../models/SessionReport');
 const { verifyToken, adminOnly } = require('../middleware/auth');
+const { appendEmbeddings } = require('../utils/embeddingStore');
 
 async function nextStudentId() {
   const count = await Student.countDocuments();
@@ -122,6 +123,27 @@ router.post('/:id/face-embeddings', verifyToken, async (req, res) => {
     );
     if (!student) return res.status(404).json({ message: 'Student not found' });
     res.json({ id: student._id.toString(), enrolledVectors: embeddings.length, faceEnrolledAt: student.faceEnrolledAt });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// PATCH /api/students/:id/face-embeddings — append a high-confidence sighting
+// (continual enrollment growth), unlike POST above which REPLACES the whole
+// set. Caps at MAX_EMBEDDINGS_PER_IDENTITY, dropping the oldest first.
+router.patch('/:id/face-embeddings', verifyToken, async (req, res) => {
+  try {
+    const { embedding } = req.body;
+    if (!Array.isArray(embedding)) {
+      return res.status(400).json({ message: 'embedding (array of numbers) is required' });
+    }
+    const student = await Student.findById(req.params.id).select('faceEmbeddings');
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    student.faceEmbeddings = appendEmbeddings(student.faceEmbeddings, [embedding]);
+    student.faceEnrolledAt = new Date();
+    await student.save();
+    res.json({ id: student._id.toString(), enrolledVectors: student.faceEmbeddings.length });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

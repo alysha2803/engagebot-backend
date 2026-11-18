@@ -8,7 +8,12 @@ router.get('/', verifyToken, async (req, res) => {
   try {
     const { date } = req.query;
     if (!date) return res.status(400).json({ message: 'date query parameter required (YYYY-MM-DD)' });
-    const reports = await SessionReport.find({ date }).lean();
+    // Chronological order (oldest first) -- callers that want "the most
+    // recent report" take .last, which only means that with an explicit
+    // sort; MongoDB's default order isn't guaranteed to be creation order,
+    // and multiple sessions on the same date (e.g. repeated test runs) need
+    // this to disambiguate correctly.
+    const reports = await SessionReport.find({ date }).sort({ createdAt: 1 }).lean();
     res.json(reports.map(r => ({ ...r, id: r._id.toString(), _id: undefined, __v: undefined })));
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -77,6 +82,24 @@ router.get('/student/:studentId', verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/reports/class/:classGroup/latest — the single most recent report
+// for this class, in full, regardless of status or "today". Exists because
+// filtering by today's date using the CLIENT's own local clock (as the
+// dashboard's old approach did) is timezone-fragile -- a device clock that
+// disagrees with the server/droid's Malaysia time silently picks the wrong
+// "today" and returns a stale report. Sorting by true creation time and
+// taking the first is timezone-independent and always correct.
+router.get('/class/:classGroup/latest', verifyToken, async (req, res) => {
+  try {
+    const report = await SessionReport.findOne({ classGroup: req.params.classGroup })
+      .sort({ createdAt: -1 });
+    if (!report) return res.status(404).json({ message: 'No reports found for this class' });
+    res.json(report.toPublic());
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // GET /api/reports/class/:classGroup — engagement summary across all sessions for a class
 router.get('/class/:classGroup', verifyToken, async (req, res) => {
   try {
@@ -84,8 +107,12 @@ router.get('/class/:classGroup', verifyToken, async (req, res) => {
     const { date } = req.query;
     const match = { classGroup };
     if (date) match.date = date;
-    // Sort newest-first so the first occurrence of each student = their latest score.
-    const reports = await SessionReport.find(match).sort({ date: -1 }).lean();
+    // Sort newest-first by actual creation time, not the `date` string --
+    // multiple sessions on the same date (e.g. repeated test runs) need
+    // createdAt to disambiguate which one is really the most recent; the
+    // "first occurrence of each student = their latest score" logic below
+    // depends on this being correct.
+    const reports = await SessionReport.find(match).sort({ createdAt: -1 }).lean();
 
     if (reports.length === 0) {
       return res.json({ classGroup, avgFocusScore: 0, totalSessions: 0, studentBreakdown: [] });
@@ -95,6 +122,11 @@ router.get('/class/:classGroup', verifyToken, async (req, res) => {
     const avgFocusScore = Math.round(
       reports.reduce((sum, r) => sum + (r.avgFocusScore || 0), 0) / totalSessions
     );
+    // The latest single session's own stored values -- what the app shows
+    // as "the current engagement %", distinct from avgFocusScore above
+    // (which is an average ACROSS all sessions ever held for this class).
+    const latestAvgFocusScore = reports[0].avgFocusScore || 0;
+    const latestOverallEngagement = reports[0].overallEngagement || 'medium';
 
     const studentMap = new Map();
     for (const report of reports) {
@@ -103,7 +135,10 @@ router.get('/class/:classGroup', verifyToken, async (req, res) => {
           studentMap.set(se.studentId, {
             studentId: se.studentId,
             studentName: se.studentName,
-            latestFocusScore: se.focusScore || 0, // first seen = most recent (sorted desc)
+            // First seen = most recent (reports sorted desc above).
+            latestFocusScore: se.focusScore || 0,
+            latestParticipationScore: se.participationScore || 0,
+            latestEngagementLevel: se.engagementLevel || 'medium',
             scores: [],
             distractedCount: 0,
           });
@@ -118,12 +153,14 @@ router.get('/class/:classGroup', verifyToken, async (req, res) => {
       studentId: s.studentId,
       studentName: s.studentName,
       latestFocusScore: s.latestFocusScore,
+      latestParticipationScore: s.latestParticipationScore,
+      latestEngagementLevel: s.latestEngagementLevel,
       avgFocusScore: Math.round(s.scores.reduce((a, b) => a + b, 0) / s.scores.length),
       sessions: s.scores.length,
       distractedCount: s.distractedCount,
     }));
 
-    res.json({ classGroup, avgFocusScore, totalSessions, studentBreakdown });
+    res.json({ classGroup, avgFocusScore, latestAvgFocusScore, latestOverallEngagement, totalSessions, studentBreakdown });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
