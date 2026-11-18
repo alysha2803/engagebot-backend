@@ -1,6 +1,6 @@
 // Run once to create the first admin account:
 //   node scripts/createAdmin.js
-// Set MONGO_URI, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME as env vars or in .env
+// Set MONGO_URI, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME (and optionally ADMIN_SCHOOL) as env vars or in .env
 
 require('dotenv').config();
 require('../db/dns');
@@ -14,6 +14,7 @@ async function main() {
   const password = (process.env.ADMIN_PASSWORD || '').trim();
   const displayName = (process.env.ADMIN_NAME || 'Admin').trim();
   const role = process.env.ADMIN_ROLE || 'super_admin';
+  const school = (process.env.ADMIN_SCHOOL || '').trim();
 
   if (!email || !password) {
     console.error('Set ADMIN_EMAIL and ADMIN_PASSWORD in your .env file');
@@ -26,8 +27,8 @@ async function main() {
     process.exit(0);
   }
 
-  const admin = await Admin.create({ email: email.toLowerCase(), password, displayName, role });
-  console.log(`Admin created: ${admin.email} (role: ${admin.role})`);
+  const admin = await Admin.create({ email: email.toLowerCase(), password, displayName, role, school });
+  console.log(`Admin created: ${admin.email} (role: ${admin.role}, school: ${admin.school || 'not set'})`);
   process.exit(0);
 }
 

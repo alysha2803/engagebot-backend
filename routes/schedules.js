@@ -5,6 +5,25 @@ const Teacher = require('../models/Teacher');
 const { verifyToken, verifyDroidOrToken, adminOnly, isTeacher } = require('../middleware/auth');
 const sendError = require('../utils/sendError');
 
+const toMinutes = t => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+
+// Another lesson on the same day, overlapping in time, for the same class or the same teacher.
+// The admin's schedule grid shows these as conflicts, so they are refused when saving.
+async function findClash({ day, startTime, endTime, classGroup, teacherId }, excludeId) {
+  const candidates = await ClassSchedule.find({
+    day,
+    $or: [{ classGroup }, ...(teacherId ? [{ teacherId }] : [])],
+    ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+  }).lean();
+  const start = toMinutes(startTime);
+  const end = toMinutes(endTime);
+  const clash = candidates.find(s => toMinutes(s.startTime) < end && start < toMinutes(s.endTime));
+  if (!clash) return null;
+  return clash.classGroup === classGroup
+    ? `${classGroup} already has ${clash.subject} at ${clash.startTime}–${clash.endTime} on ${day}.`
+    : `${clash.teacherName} already teaches ${clash.subject} (${clash.classGroup}) at ${clash.startTime}–${clash.endTime} on ${day}.`;
+}
+
 const checkInTimeFormat = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit' });
 
 const SESSION_COLORS = {
@@ -41,6 +60,11 @@ router.post('/', verifyToken, adminOnly, async (req, res) => {
     if (!subject || !teacherId || !teacherName || !classGroup || !startTime || !endTime || !day) {
       return res.status(400).json({ message: 'Missing required session fields' });
     }
+    if (toMinutes(endTime) <= toMinutes(startTime)) {
+      return res.status(400).json({ message: 'End time must be after the start time' });
+    }
+    const clash = await findClash({ day, startTime, endTime, classGroup, teacherId });
+    if (clash) return res.status(409).json({ message: clash });
     const session = await ClassSchedule.create({
       subject, teacherId, teacherName, classGroup, startTime, endTime, day,
       status: 'scheduled',
@@ -86,6 +110,15 @@ router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
 
     const oldSession = await ClassSchedule.findById(req.params.id);
     if (!oldSession) return res.status(404).json({ message: 'Session not found' });
+
+    if (['day', 'startTime', 'endTime', 'classGroup', 'teacherId'].some(k => patch[k] !== undefined)) {
+      const next = { ...oldSession.toObject(), ...patch };
+      if (toMinutes(next.endTime) <= toMinutes(next.startTime)) {
+        return res.status(400).json({ message: 'End time must be after the start time' });
+      }
+      const clash = await findClash(next, req.params.id);
+      if (clash) return res.status(409).json({ message: clash });
+    }
 
     const session = await ClassSchedule.findByIdAndUpdate(req.params.id, patch, { new: true });
 

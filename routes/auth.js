@@ -19,6 +19,11 @@ const loginLimiter = rateLimit({
   message: { message: 'Too many failed login attempts. Try again in 15 minutes.' },
 });
 
+// Shape the admin web app expects for the signed-in user.
+const adminUser = admin => ({
+  uid: admin._id, email: admin.email, displayName: admin.displayName, photoURL: null, role: admin.role, school: admin.school || '',
+});
+
 function signToken(payload, expiresIn = '8h') {
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn });
 }
@@ -38,10 +43,7 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
     }
 
     const token = signToken({ id: admin._id, role: admin.role, email: admin.email });
-    res.json({
-      token,
-      user: { uid: admin._id, email: admin.email, displayName: admin.displayName, photoURL: null, role: admin.role },
-    });
+    res.json({ token, user: adminUser(admin) });
   } catch (err) {
     sendError(res, err);
   }
@@ -82,7 +84,7 @@ router.get('/me', verifyToken, async (req, res) => {
     }
     const admin = await Admin.findById(req.user.id).select('-password');
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
-    res.json({ uid: admin._id, email: admin.email, displayName: admin.displayName, photoURL: null, role: admin.role });
+    res.json(adminUser(admin));
   } catch (err) {
     sendError(res, err);
   }

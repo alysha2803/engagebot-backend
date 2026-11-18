@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const Admin = require('../models/Admin');
 const Teacher = require('../models/Teacher');
 const ClassSchedule = require('../models/ClassSchedule');
 const { verifyToken, adminOnly } = require('../middleware/auth');
@@ -63,7 +64,8 @@ router.patch('/profile', verifyToken, async (req, res) => {
   }
 });
 
-// POST /api/teachers — admin creates a new teacher with a temporary password
+// POST /api/teachers — admin creates a new teacher with a temporary password.
+// The teacher is tied to the registering admin's school.
 router.post('/', verifyToken, adminOnly, async (req, res) => {
   try {
     const { name, email, password, department, subjects, assignedClasses } = req.body;
@@ -74,6 +76,7 @@ router.post('/', verifyToken, adminOnly, async (req, res) => {
     const existing = await Teacher.findOne({ email: email.trim().toLowerCase() });
     if (existing) return res.status(400).json({ message: 'A teacher with this email already exists' });
 
+    const admin = await Admin.findById(req.user.id, 'school').lean();
     const employeeId = await nextEmployeeId();
     const teacher = await Teacher.create({
       name: name.trim(),
@@ -83,6 +86,7 @@ router.post('/', verifyToken, adminOnly, async (req, res) => {
       subjects: subjects || [],
       assignedClasses: assignedClasses || [],
       employeeId,
+      school: admin?.school || '',
       status: 'pending',
     });
     res.status(201).json(teacher.toPublic());
@@ -94,7 +98,8 @@ router.post('/', verifyToken, adminOnly, async (req, res) => {
 // PATCH /api/teachers/:id — admin updates a teacher
 router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
   try {
-    const allowed = ['name', 'email', 'department', 'subjects', 'assignedClasses', 'status', 'school'];
+    // school is not editable here: it comes from the registering admin (see POST above)
+    const allowed = ['name', 'email', 'department', 'subjects', 'assignedClasses', 'status'];
     const patch = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) patch[key] = req.body[key];

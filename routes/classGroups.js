@@ -9,6 +9,15 @@ const Teacher = require('../models/Teacher');
 const SessionReport = require('../models/SessionReport');
 const { verifyToken, adminOnly } = require('../middleware/auth');
 const sendError = require('../utils/sendError');
+const { assignDroidToClass, UNASSIGNED } = require('../utils/droidAssignment');
+
+// Keeps the droid side in step when a classroom's droid is set or cleared here.
+async function syncClassDroid(group, previousDroidId) {
+  if (group.droidId) await assignDroidToClass(group.droidId, group.name);
+  if (previousDroidId && previousDroidId !== group.droidId) {
+    await Droid.updateOne({ droidId: previousDroidId }, { assignedRoom: UNASSIGNED });
+  }
+}
 
 // GET /api/class-groups
 router.get('/', verifyToken, async (req, res) => {
@@ -48,6 +57,7 @@ router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
 
     if (!renamed) {
       const group = await ClassGroup.findByIdAndUpdate(req.params.id, patch, { new: true });
+      if (patch.droidId !== undefined) await syncClassDroid(group, existing.droidId);
       return res.json(group.toPublic());
     }
 
@@ -67,6 +77,7 @@ router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
     } finally {
       await session.endSession();
     }
+    if (patch.droidId !== undefined) await syncClassDroid(group, existing.droidId);
     res.json(group.toPublic());
   } catch (err) {
     sendError(res, err);
