@@ -5,8 +5,19 @@ const ClassGroup = require('../models/ClassGroup');
 const ClassSchedule = require('../models/ClassSchedule');
 const Student = require('../models/Student');
 const Droid = require('../models/Droid');
+const Teacher = require('../models/Teacher');
 const SessionReport = require('../models/SessionReport');
 const { verifyToken, adminOnly } = require('../middleware/auth');
+const sendError = require('../utils/sendError');
+const { assignDroidToClass, UNASSIGNED } = require('../utils/droidAssignment');
+
+// Keeps the droid side in step when a classroom's droid is set or cleared here.
+async function syncClassDroid(group, previousDroidId) {
+  if (group.droidId) await assignDroidToClass(group.droidId, group.name);
+  if (previousDroidId && previousDroidId !== group.droidId) {
+    await Droid.updateOne({ droidId: previousDroidId }, { assignedRoom: UNASSIGNED });
+  }
+}
 
 // GET /api/class-groups
 router.get('/', verifyToken, async (req, res) => {
@@ -14,7 +25,7 @@ router.get('/', verifyToken, async (req, res) => {
     const groups = await ClassGroup.find().lean();
     res.json(groups.map(g => ({ ...g, id: g._id.toString(), _id: undefined, __v: undefined })));
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -26,7 +37,7 @@ router.post('/', verifyToken, adminOnly, async (req, res) => {
     const group = await ClassGroup.create({ name, academicYear, room, droidId });
     res.status(201).json(group.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -46,6 +57,7 @@ router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
 
     if (!renamed) {
       const group = await ClassGroup.findByIdAndUpdate(req.params.id, patch, { new: true });
+      if (patch.droidId !== undefined) await syncClassDroid(group, existing.droidId);
       return res.json(group.toPublic());
     }
 
@@ -60,13 +72,15 @@ router.patch('/:id', verifyToken, adminOnly, async (req, res) => {
         await Student.updateMany({ classGroup: oldName }, { classGroup: newName }, { session });
         await Droid.updateMany({ assignedRoom: oldName }, { assignedRoom: newName }, { session });
         await SessionReport.updateMany({ classGroup: oldName }, { classGroup: newName }, { session });
+        await Teacher.updateMany({ assignedClasses: oldName }, { $set: { 'assignedClasses.$': newName } }, { session });
       });
     } finally {
       await session.endSession();
     }
+    if (patch.droidId !== undefined) await syncClassDroid(group, existing.droidId);
     res.json(group.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -85,6 +99,7 @@ router.delete('/:id', verifyToken, adminOnly, async (req, res) => {
         await ClassSchedule.deleteMany({ classGroup: name }, { session });
         await Student.updateMany({ classGroup: name }, { classGroup: 'Unassigned' }, { session });
         await Droid.updateMany({ assignedRoom: name }, { assignedRoom: 'Unassigned' }, { session });
+        await Teacher.updateMany({ assignedClasses: name }, { $pull: { assignedClasses: name } }, { session });
         await ClassGroup.deleteOne({ _id: group._id }, { session });
       });
     } finally {
@@ -92,7 +107,7 @@ router.delete('/:id', verifyToken, adminOnly, async (req, res) => {
     }
     res.json({ message: 'Class group deleted' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 

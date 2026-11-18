@@ -38,6 +38,7 @@ const sessionReportSchema = new mongoose.Schema({
   endedAt: { type: Date },
   overallEngagement: { type: String, enum: ['high', 'medium', 'low', 'absent'] },
   avgFocusScore: { type: Number, default: 0 },
+  avgNoiseEnergy: { type: Number }, // average classroom loudness (RMS, 0–1) from the droid's microphone
   status: { type: String, enum: ['completed', 'in_progress'], default: 'in_progress' },
   // Class-level (one room mic, not attributable to a single student) --
   // unlike the per-student distributions, this is NOT blended into

@@ -12,7 +12,7 @@ const boxSchema = new mongoose.Schema({
 }, { _id: false, strict: 'throw' });
 
 const poseFeatureSchema = new mongoose.Schema({
-  segment_id: { type: String, required: true },
+  segment_id: { type: String, required: true, unique: true },
   extractor: { type: String },
   pose_detected_ratio: { type: Number },
   shoulder_width_mean: { type: Number },

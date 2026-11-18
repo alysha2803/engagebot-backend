@@ -3,8 +3,7 @@
 // Safe to re-run: only touches reports where startedAt or endedAt is missing.
 
 require('dotenv').config();
-const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']);
+require('../db/dns');
 const mongoose = require('mongoose');
 const SessionReport = require('../models/SessionReport');
 

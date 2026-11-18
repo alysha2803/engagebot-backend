@@ -7,7 +7,7 @@ const auFields = {};
 for (const au of ACTION_UNITS) auFields[`AU${au}_r_mean`] = { type: Number };
 
 const openFaceFeatureSchema = new mongoose.Schema({
-  segment_id: { type: String, required: true },
+  segment_id: { type: String, required: true, unique: true },
   extractor: { type: String },
   schema: { type: String },
   face_detection_confidence_mean: { type: Number },

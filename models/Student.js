@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 const studentSchema = new mongoose.Schema({
@@ -12,6 +13,8 @@ const studentSchema = new mongoose.Schema({
   // vectors per student improve match robustness across angles/lighting.
   faceEmbeddings: { type: [[Number]], default: undefined },
   faceEnrolledAt: { type: Date },
+  // Anonymous ID used in the research database. This field is the only link back to the student.
+  personId: { type: String, unique: true, sparse: true, select: false, default: () => crypto.randomUUID() },
 }, { timestamps: true });
 
 studentSchema.methods.toPublic = function () {
@@ -22,6 +25,7 @@ studentSchema.methods.toPublic = function () {
   // Biometric data — never broadcast on general student reads; only the
   // dedicated face-embeddings endpoint (used by the droid for matching) sees it.
   delete obj.faceEmbeddings;
+  delete obj.personId;
   return obj;
 };
 

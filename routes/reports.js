@@ -1,7 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const SessionReport = require('../models/SessionReport');
-const { verifyToken } = require('../middleware/auth');
+const Student = require('../models/Student');
+const { verifyToken, verifyDroidOrToken, canAccessClass, classFilter } = require('../middleware/auth');
+const sendError = require('../utils/sendError');
+const escapeRegex = require('../utils/escapeRegex');
+
+const WRITABLE_ON_CREATE = [
+  'date', 'subject', 'classGroup', 'teacherName', 'droidId', 'startTime', 'endTime',
+  'overallEngagement', 'avgFocusScore', 'status', 'studentEngagements', 'droidObservations',
+];
+
+const toPublicLean = r => ({ ...r, id: r._id.toString(), _id: undefined, __v: undefined });
 
 // GET /api/reports?date=YYYY-MM-DD
 router.get('/', verifyToken, async (req, res) => {
@@ -13,10 +23,10 @@ router.get('/', verifyToken, async (req, res) => {
     // sort; MongoDB's default order isn't guaranteed to be creation order,
     // and multiple sessions on the same date (e.g. repeated test runs) need
     // this to disambiguate correctly.
-    const reports = await SessionReport.find({ date }).sort({ createdAt: 1 }).lean();
-    res.json(reports.map(r => ({ ...r, id: r._id.toString(), _id: undefined, __v: undefined })));
+    const reports = await SessionReport.find({ date, ...classFilter(req) }).sort({ createdAt: 1 }).lean();
+    res.json(reports.map(toPublicLean));
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -30,6 +40,7 @@ router.get('/monthly', verifyToken, async (req, res) => {
     const prefix = `${year}-${String(month).padStart(2, '0')}`;
     const sessions = await SessionReport.find({
       date: { $gte: `${prefix}-01`, $lte: `${prefix}-31` },
+      ...classFilter(req),
     }).lean();
 
     const totalSessions = sessions.length;
@@ -52,11 +63,9 @@ router.get('/monthly', verifyToken, async (req, res) => {
       }))
       .sort((a, b) => b.avgEngagement - a.avgEngagement);
 
-    const sessionReports = sessions.map(r => ({ ...r, id: r._id.toString(), _id: undefined, __v: undefined }));
-
-    res.json({ month, year, classGroup: 'all', totalSessions, completedSessions, avgEngagement, subjectBreakdown, sessionReports });
+    res.json({ month, year, classGroup: 'all', totalSessions, completedSessions, avgEngagement, subjectBreakdown, sessionReports: sessions.map(toPublicLean) });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -64,21 +73,24 @@ router.get('/monthly', verifyToken, async (req, res) => {
 router.get('/student/:studentId', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
+    const scope = classFilter(req);
     // Search by studentId first; fall back to studentName if provided as query param.
-    const query = { 'studentEngagements.studentId': studentId };
-    const reports = await SessionReport.find(query).sort({ date: -1 }).lean();
+    const reports = await SessionReport.find({ ...scope, 'studentEngagements.studentId': studentId }).sort({ date: -1 }).lean();
 
     // If nothing found by ID, try by name (handles ID-format mismatches in the prototype).
+    // The name only counts within the student's own class, so namesakes elsewhere don't match.
     if (reports.length === 0 && req.query.name) {
+      const student = await Student.findOne({ studentId }).lean();
       const byName = await SessionReport.find({
-        'studentEngagements.studentName': { $regex: new RegExp(`^${req.query.name}$`, 'i') },
+        $and: [scope, student ? { classGroup: student.classGroup } : {}],
+        'studentEngagements.studentName': { $regex: new RegExp(`^${escapeRegex(req.query.name)}$`, 'i') },
       }).sort({ date: -1 }).lean();
-      return res.json(byName.map(r => ({ ...r, id: r._id.toString(), _id: undefined, __v: undefined })));
+      return res.json(byName.map(toPublicLean));
     }
 
-    res.json(reports.map(r => ({ ...r, id: r._id.toString(), _id: undefined, __v: undefined })));
+    res.json(reports.map(toPublicLean));
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -91,12 +103,15 @@ router.get('/student/:studentId', verifyToken, async (req, res) => {
 // taking the first is timezone-independent and always correct.
 router.get('/class/:classGroup/latest', verifyToken, async (req, res) => {
   try {
-    const report = await SessionReport.findOne({ classGroup: req.params.classGroup })
-      .sort({ createdAt: -1 });
+    const { classGroup } = req.params;
+    if (!canAccessClass(req, classGroup)) {
+      return res.status(403).json({ message: 'You are not assigned to this class' });
+    }
+    const report = await SessionReport.findOne({ classGroup }).sort({ createdAt: -1 });
     if (!report) return res.status(404).json({ message: 'No reports found for this class' });
     res.json(report.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
@@ -104,6 +119,9 @@ router.get('/class/:classGroup/latest', verifyToken, async (req, res) => {
 router.get('/class/:classGroup', verifyToken, async (req, res) => {
   try {
     const { classGroup } = req.params;
+    if (!canAccessClass(req, classGroup)) {
+      return res.status(403).json({ message: 'You are not assigned to this class' });
+    }
     const { date } = req.query;
     const match = { classGroup };
     if (date) match.date = date;
@@ -162,22 +180,29 @@ router.get('/class/:classGroup', verifyToken, async (req, res) => {
 
     res.json({ classGroup, avgFocusScore, latestAvgFocusScore, latestOverallEngagement, totalSessions, studentBreakdown });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
-// POST /api/reports — written by droid/AI pipeline
-router.post('/', verifyToken, async (req, res) => {
+// POST /api/reports — written by droid/AI pipeline (X-Droid-Key), an admin, or the class's teacher
+router.post('/', verifyDroidOrToken, async (req, res) => {
   try {
-    const report = await SessionReport.create(req.body);
+    const body = {};
+    for (const key of WRITABLE_ON_CREATE) {
+      if (req.body[key] !== undefined) body[key] = req.body[key];
+    }
+    if (!canAccessClass(req, body.classGroup)) {
+      return res.status(403).json({ message: 'You are not assigned to this class' });
+    }
+    const report = await SessionReport.create(body);
     res.status(201).json(report.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
 // PATCH /api/reports/:id — live update from droid prototype
-router.patch('/:id', verifyToken, async (req, res) => {
+router.patch('/:id', verifyDroidOrToken, async (req, res) => {
   try {
     const allowed = [
       'status', 'endTime', 'overallEngagement', 'avgFocusScore',
@@ -187,13 +212,16 @@ router.patch('/:id', verifyToken, async (req, res) => {
     for (const key of allowed) {
       if (req.body[key] !== undefined) patch[key] = req.body[key];
     }
-    const report = await SessionReport.findByIdAndUpdate(
-      req.params.id, patch, { new: true }
-    );
+    const report = await SessionReport.findById(req.params.id);
     if (!report) return res.status(404).json({ message: 'Report not found' });
+    if (!canAccessClass(req, report.classGroup)) {
+      return res.status(403).json({ message: 'You are not assigned to this class' });
+    }
+    report.set(patch);
+    await report.save(); // save(), not findByIdAndUpdate: the model's hook derives endedAt from endTime
     res.json(report.toPublic());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 });
 
